@@ -1,20 +1,18 @@
-import requests
 from datetime import datetime
 from config import (
-    GITHUB_TOKEN, USERNAME, AI_API_KEY, headers, six_months_ago,
-    WIP_KEYWORDS, ADDRESS_KEYWORDS, LINT_KEYWORDS, TEST_KEYWORDS,
-    DUMMY_TEST_KEYWORDS, CONFIG_FILES, TEST_LINE_PATTERNS,
-    DUMMY_LINE_PATTERNS, LINT_LINE_PATTERNS,
+    USERNAME, AI_API_KEY, lookback_start, lookback_end, make_request,
+    WIP_KEYWORDS, ADDRESS_KEYWORDS, LINT_KEYWORDS, TEST_FILE_PATTERNS,
+    CONFIG_FILES, DUMMY_LINE_PATTERNS, LINT_LINE_PATTERNS,
     MEANINGFUL_COMMIT_WEIGHT, ADDRESS_COMMENT_WEIGHT, LINES_CHANGED_WEIGHT
 )
 
 def get_merged_prs(username):
-    """fetch all merged PRs by username in last 6 months"""
+    """fetch all merged PRs by username in lookback window"""
     prs = []
     page = 1
     while True:
-        url = f"https://api.github.com/search/issues?q=type:pr+author:{username}+is:merged+merged:>{six_months_ago.strftime('%Y-%m-%d')}&per_page=100&page={page}"
-        res = requests.get(url, headers=headers).json()
+        url = f"https://api.github.com/search/issues?q=type:pr+author:{username}+is:merged+merged:{lookback_start.strftime('%Y-%m-%d')}..{lookback_end.strftime('%Y-%m-%d')}&per_page=100&page={page}"
+        res = make_request(url)
         items = res.get("items", [])
         prs.extend(items)
         if len(items) < 100:
@@ -28,7 +26,7 @@ def get_pr_commits_with_diffs(repo_full_name, pr_number):
     page = 1
     while True:
         url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/commits?per_page=100&page={page}"
-        res = requests.get(url, headers=headers).json()
+        res = make_request(url)
         commits.extend(res)
         if len(res) < 100:
             break
@@ -38,7 +36,7 @@ def get_pr_commits_with_diffs(repo_full_name, pr_number):
     for commit in commits:
         sha = commit["sha"]
         url = f"https://api.github.com/repos/{repo_full_name}/commits/{sha}"
-        detail = requests.get(url, headers=headers).json()
+        detail = make_request(url)
         commits_with_diffs.append({
             "commit": commit,
             "files": detail.get("files", []),
@@ -50,17 +48,15 @@ def get_pr_comments(repo_full_name, pr_number):
     """fetch all inline and general PR comments"""
     comments = []
     url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/comments?per_page=100"
-    res = requests.get(url, headers=headers).json()
-    comments.extend(res)
+    comments.extend(make_request(url))
     url = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}/comments?per_page=100"
-    res = requests.get(url, headers=headers).json()
-    comments.extend(res)
+    comments.extend(make_request(url))
     return comments
 
 def get_final_file_version(repo_full_name, file_path, ref):
     """fetch final version of a file at a given ref — only called for AI analysis"""
     url = f"https://api.github.com/repos/{repo_full_name}/contents/{file_path}?ref={ref}"
-    res = requests.get(url, headers=headers).json()
+    res = make_request(url)
     return res.get("content", "")
 
 def scan_diff_lines(files):
@@ -71,19 +67,24 @@ def scan_diff_lines(files):
             continue
         added_lines = [l for l in patch.split("\n") if l.startswith("+")]
 
-        if any(any(pattern in l for pattern in TEST_LINE_PATTERNS) for l in added_lines):
-            if any(any(pattern in l for pattern in DUMMY_LINE_PATTERNS) for l in added_lines):
-                return "excluded"
-            return "testing"
-
-        if all(any(pattern in l for pattern in DUMMY_LINE_PATTERNS) for l in added_lines):
+        # check for dummy/placeholder patterns
+        if added_lines and all(any(pattern in l for pattern in DUMMY_LINE_PATTERNS) 
+                               for l in added_lines if l.strip()):
             return "WIP/temp"
 
-        if all(l.strip() == "" or any(pattern in l for pattern in LINT_LINE_PATTERNS)
+        # check for lint only changes
+        if added_lines and all(l.strip() == "" or any(pattern in l for pattern in LINT_LINE_PATTERNS)
                for l in added_lines):
             return "lint/minor"
 
     return None
+
+def is_test_commit(files):
+    """check if all changed files are test files based on file paths"""
+    changed_files = [f["filename"] for f in files]
+    if not changed_files:
+        return False
+    return all(any(pattern in f for pattern in TEST_FILE_PATTERNS) for f in changed_files)
 
 def classify_commit(commit_data, pr_comments):
     """run commit through classification pipeline"""
@@ -105,12 +106,12 @@ def classify_commit(commit_data, pr_comments):
     if any(kw in message for kw in LINT_KEYWORDS):
         return "lint/minor", 0
 
-    # stage 2 — commit message keyword filter
-    if any(kw in message for kw in WIP_KEYWORDS):
+    # stage 2 — keyword and file based filter
+    if any(message.startswith(kw) or f" {kw} " in message or message == kw
+           for kw in WIP_KEYWORDS):
         return "WIP/temp", 0
-    if any(kw in message for kw in DUMMY_TEST_KEYWORDS):
-        return "excluded", 0
-    if any(kw in message for kw in TEST_KEYWORDS):
+
+    if is_test_commit(files):
         return "testing", 0
 
     # stage 3 — PR conversation correlation
@@ -222,7 +223,7 @@ if __name__ == "__main__":
 
     pr_results.sort(key=lambda x: x["score"], reverse=True)
 
-    print(f"\nGitHub PR stats for {USERNAME} (last 6 months):")
+    print(f"\nGitHub PR stats for {USERNAME} ({lookback_start.strftime('%Y-%m-%d')} to {lookback_end.strftime('%Y-%m-%d')}):")
     print(f"  PRs merged: {len(merged_prs)}")
 
     print(f"\nCommit breakdown across merged PRs:")

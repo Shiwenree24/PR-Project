@@ -1,23 +1,20 @@
-import requests
 from datetime import datetime
 from config import (
-    GITHUB_TOKEN, USERNAME, headers, six_months_ago
+    USERNAME, lookback_start, lookback_end, make_request
 )
 
 def get_pr_reviews(repo_full_name, pr_number):
     """fetch all reviews for a PR"""
     url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/reviews?per_page=100"
-    return requests.get(url, headers=headers).json()
+    return make_request(url)
 
 def get_pr_comments(repo_full_name, pr_number):
     """fetch all inline and general PR comments"""
     comments = []
     url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/comments?per_page=100"
-    res = requests.get(url, headers=headers).json()
-    comments.extend(res)
+    comments.extend(make_request(url))
     url = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}/comments?per_page=100"
-    res = requests.get(url, headers=headers).json()
-    comments.extend(res)
+    comments.extend(make_request(url))
     return comments
 
 def get_pr_commits(repo_full_name, pr_number):
@@ -26,7 +23,7 @@ def get_pr_commits(repo_full_name, pr_number):
     page = 1
     while True:
         url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/commits?per_page=100&page={page}"
-        res = requests.get(url, headers=headers).json()
+        res = make_request(url)
         commits.extend(res)
         if len(res) < 100:
             break
@@ -43,10 +40,8 @@ def analyze_review_impact(username, reviews, pr_comments, commits):
     acknowledged_count = 0
     no_response_count = 0
 
-    # get all reviews by this user
     user_reviews = [r for r in reviews if r["user"]["login"] == username]
 
-    # get commit times for cross referencing
     commit_times = [
         datetime.strptime(
             c["commit"]["committer"]["date"], "%Y-%m-%dT%H:%M:%SZ"
@@ -71,21 +66,19 @@ def analyze_review_impact(username, reviews, pr_comments, commits):
     reviewer_comments = [
         c for c in pr_comments
         if c.get("user", {}).get("login") == username
-        and "in_reply_to_id" not in c  # only top level comments not replies
+        and "in_reply_to_id" not in c
     ]
 
     for comment in reviewer_comments:
         comment_id = comment["id"]
         comment_time = datetime.strptime(comment["created_at"], "%Y-%m-%dT%H:%M:%SZ")
 
-        # check if someone else replied to this comment
         replies = [
             c for c in pr_comments
             if c.get("in_reply_to_id") == comment_id
             and c.get("user", {}).get("login") != username
         ]
 
-        # check if a commit was made after this comment
         commits_after = [t for t in commit_times if t > comment_time]
 
         if replies or commits_after:
@@ -109,27 +102,24 @@ def get_reviews_given(username):
 
     page = 1
     while True:
-        url = f"https://api.github.com/search/issues?q=type:pr+reviewed-by:{username}+created:>{six_months_ago.strftime('%Y-%m-%d')}&per_page=100&page={page}"
-        res = requests.get(url, headers=headers).json()
+        url = f"https://api.github.com/search/issues?q=type:pr+reviewed-by:{username}+created:{lookback_start.strftime('%Y-%m-%d')}..{lookback_end.strftime('%Y-%m-%d')}&per_page=100&page={page}"
+        res = make_request(url)
         items = res.get("items", [])
 
         for pr in items:
             repo_full_name = pr["repository_url"].split("repos/")[1]
             pr_number = pr["number"]
 
-            # fetch everything needed for this PR
             reviews = get_pr_reviews(repo_full_name, pr_number)
             pr_comments = get_pr_comments(repo_full_name, pr_number)
             commits = get_pr_commits(repo_full_name, pr_number)
 
-            # count reviews and approvals
             for review in reviews:
                 if review["user"]["login"] == username:
                     review_count += 1
                     if review["state"] == "APPROVED":
                         approval_count += 1
 
-            # analyze review impact
             impact = analyze_review_impact(username, reviews, pr_comments, commits)
             total_actioned += impact["actioned"]
             total_acknowledged += impact["acknowledged"]
@@ -152,7 +142,7 @@ if __name__ == "__main__":
     print(f"Fetching review stats for {USERNAME}...")
     review_stats = get_reviews_given(USERNAME)
 
-    print(f"\nGitHub review stats for {USERNAME} (last 6 months):")
+    print(f"  GitHub review stats for {USERNAME} ({lookback_start.strftime('%Y-%m-%d')} to {lookback_end.strftime('%Y-%m-%d')}):")
     print(f"  Total reviews given: {review_stats['review_count']}")
     print(f"  Approvals given: {review_stats['approval_count']}")
     print(f"  Reviews actioned (REQUEST_CHANGES -> APPROVED): {review_stats['actioned']}")
