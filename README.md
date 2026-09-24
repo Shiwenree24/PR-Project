@@ -4,7 +4,7 @@ Measures how much meaningful work a GitHub user put into their merged pull reque
 
 Instead of counting raw commits or lines, every commit is sorted into a bucket (lint/config, WIP, testing, addressed comments, meaningful) so that formatting passes, throwaway work, and reverted changes don't inflate the score.
 
-**Design diagram:** [Figma board](https://www.figma.com/board/2dmzwu1JJKPzuoWVXgia8W/PP?node-id=0-1&p=f)
+**Design diagram:** [Figma board](https://www.figma.com/board/2dmzwu1JJKPzuoWVXgia8W/PP?node-id=0-1)
 
 ## How it works
 
