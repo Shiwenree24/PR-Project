@@ -1,6 +1,6 @@
 # PR Project
 
-Measures how much meaningful work a GitHub user put into their merged pull requests over a review period, and how much impact their code reviews had.
+Many companies are still using PRs as a quantitative measure for software engineer performance reviews, but in this new age of AI, it is easier and faster to push many PRs. This project was created to evaluate how much meaningful work a GitHub user put into their merged pull requests.
 
 Instead of counting raw commits or lines, every commit is sorted into a bucket (lint/config, WIP, testing, addressed comments, meaningful) so that formatting passes, throwaway work, and reverted changes don't inflate the score.
 
